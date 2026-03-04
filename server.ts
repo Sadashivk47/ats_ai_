@@ -7,7 +7,9 @@ import crypto from "crypto";
 // Initialize SQLite database
 let db: any;
 try {
-  db = new Database("ats_ai.db");
+  // On Vercel, we must use /tmp for any file writes, but it's ephemeral
+  const dbPath = process.env.VERCEL ? "/tmp/ats_ai.db" : "ats_ai.db";
+  db = new Database(dbPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS contacts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,20 +21,17 @@ try {
     )
   `);
 } catch (err) {
-  console.error("Failed to initialize SQLite database. Contact form will not work.", err);
-  // Mock db for local dev if it fails
-  db = {
-    prepare: () => ({ run: () => {} })
-  };
+  console.error("Failed to initialize SQLite database.", err);
+  db = { prepare: () => ({ run: () => {} }) };
 }
 
 let razorpayInstance: Razorpay | null = null;
 
 function getRazorpay() {
-  const keyId = process.env.RAZORPAY_KEY_ID || "rzp_test_SLBZY9WCxTG8VM";
-  const keySecret = process.env.RAZORPAY_KEY_SECRET || "6569xei4e1i6VKaCuAus3T0T";
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
   
-  if (!razorpayInstance) {
+  if (!razorpayInstance && keyId && keySecret) {
     razorpayInstance = new Razorpay({
       key_id: keyId,
       key_secret: keySecret,
@@ -41,16 +40,16 @@ function getRazorpay() {
   return razorpayInstance;
 }
 
-async function startServer() {
-  const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+const app = express();
+app.use(express.json());
 
-  app.use(express.json());
-
+async function setupServer() {
   // API routes
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+    res.json({ status: "ok", env: process.env.NODE_ENV });
   });
+
+// ... (rest of the routes)
 
   // Contact form submission
   app.post("/api/contact", (req, res) => {
@@ -104,6 +103,29 @@ async function startServer() {
     }
   });
 
+  app.post("/api/donate/webhook", async (req, res) => {
+    try {
+      const secret = process.env.RAZORPAY_WEBHOOK_SECRET || "your_webhook_secret";
+      const signature = req.headers["x-razorpay-signature"] as string;
+      
+      const hmac = crypto.createHmac("sha256", secret);
+      hmac.update(JSON.stringify(req.body));
+      const generatedSignature = hmac.digest("hex");
+
+      if (generatedSignature === signature) {
+        const event = req.body.event;
+        console.log("Razorpay Webhook Event:", event);
+        // Handle events like payment.captured
+        res.json({ status: "ok" });
+      } else {
+        res.status(400).send("Invalid signature");
+      }
+    } catch (error) {
+      console.error("Webhook Error:", error);
+      res.status(500).send("Internal Server Error");
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -111,16 +133,19 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
+    
+    const PORT = 3000;
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
   } else {
     app.use(express.static("dist"));
     app.get("*", (req, res) => {
       res.sendFile("dist/index.html", { root: "." });
     });
   }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
 }
 
-startServer();
+setupServer();
+
+export default app;

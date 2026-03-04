@@ -28,7 +28,7 @@ export async function analyzeResume(resumeText: string, jobDescription: string):
   if (!ai) {
     throw new Error("Gemini API key is missing. Please add it to your .env file.");
   }
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-3.1-flash-lite-preview";
   
   const prompt = `
     Analyze the following resume against the job description.
